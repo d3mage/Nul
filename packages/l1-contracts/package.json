@@ -1,0 +1,24 @@
+{
+  "name": "l1-contracts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx index.ts"
+  },
+  "dependencies": {
+    "@aztec/accounts": "0.87.4",
+    "@aztec/aztec.js": "0.87.4",
+    "@aztec/ethereum": "0.87.4",
+    "@aztec/l1-artifacts": "0.87.4",
+    "@aztec/noir-contracts.js": "0.87.4",
+    "@aztec/protocol": "^1.7.1",
+    "@openzeppelin/contracts": "^5.3.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "^5.0.4",
+    "viem": "^2.22.8"
+  }
+}
