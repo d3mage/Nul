@@ -21,6 +21,7 @@ import {
 } from '@aztec/l1-artifacts';
 import { TokenContract } from '@aztec/noir-contracts.js/Token';
 import { TokenBridgeContract } from '@aztec/noir-contracts.js/TokenBridge';
+import { NulWalletContract } from './typings/NulWallet.js';
 import { describe, it } from 'node:test';
 
 import { getContract, WalletClient } from 'viem';
@@ -78,14 +79,18 @@ async function addMinter(l1TokenContract: EthAddress, l1TokenHandler: EthAddress
 }
 // docs:end:utils
 
-describe('e2e_cross_chain_messaging token_bridge_tutorial_test', () => {
-  it('Deploys tokens & bridges to L1 & L2, mints & publicly bridges tokens', async () => {
+describe('e2e_nul_wallet_test', () => {
+  it('Deploys NulWallet and demonstrates voting functionality', async () => {
     // docs:start:setup
-    const logger = createLogger('aztec:token-bridge-tutorial');
+    const logger = createLogger('aztec:nul-wallet-tutorial');
     const pxe = await setupSandbox();
     const wallets = await getInitialTestAccountsWallets(pxe);
     const ownerWallet = wallets[0];
     const ownerAztecAddress = wallets[0].getAddress();
+    const candidateWallet = wallets[1];
+    const candidateAztecAddress = wallets[1].getAddress();
+    const voterWallet = wallets[2];
+    const voterAztecAddress = wallets[2].getAddress();
     const l1ContractAddresses = (await pxe.getNodeInfo()).l1ContractAddresses;
     logger.info('L1 Contract Addresses:');
     logger.info(`Registry Address: ${l1ContractAddresses.registryAddress}`);
@@ -94,143 +99,44 @@ describe('e2e_cross_chain_messaging token_bridge_tutorial_test', () => {
     logger.info(`Rollup Address: ${l1ContractAddresses.rollupAddress}`);
     // docs:end:setup
 
-    // Deploy L2 token contract
-    // docs:start:deploy-l2-token
-    const l2TokenContract = await TokenContract.deploy(ownerWallet, ownerAztecAddress, 'L2 Token', 'L2', 18)
-      .send()
-      .deployed();
-    logger.info(`L2 token contract deployed at ${l2TokenContract.address}`);
-    // docs:end:deploy-l2-token
-
-    // Deploy L1 token contract & mint tokens
-    // docs:start:deploy-l1-token
-    const l1TokenContract = await deployTestERC20();
-    logger.info('erc20 contract deployed');
-
-    const feeAssetHandler = await deployFeeAssetHandler(l1TokenContract);
-    await addMinter(l1TokenContract, feeAssetHandler);
-
-    const l1TokenManager = new L1TokenManager(l1TokenContract, feeAssetHandler, l1Client, logger);
-    // docs:end:deploy-l1-token
-
-    // Deploy L1 portal contract
-    // docs:start:deploy-portal
-    const l1PortalContractAddress = await deployTokenPortal();
-    logger.info('L1 portal contract deployed');
-
-    const l1Portal = getContract({
-      address: l1PortalContractAddress.toString(),
-      abi: TokenPortalAbi,
-      client: l1Client as unknown as WalletClient,
-    });
-    // docs:end:deploy-portal
-    // Deploy L2 bridge contract
-    // docs:start:deploy-l2-bridge
-    const l2BridgeContract = await TokenBridgeContract.deploy(
+    // Deploy NulWallet contract
+    // docs:start:deploy-nul-wallet
+    const nulWalletContract = await NulWalletContract.deploy(
       ownerWallet,
-      l2TokenContract.address,
-      l1PortalContractAddress,
+      ownerAztecAddress,
+      EthAddress.ZERO // Using zero address as portal since we're not using L1 functionality
     )
       .send()
       .deployed();
-    logger.info(`L2 token bridge contract deployed at ${l2BridgeContract.address}`);
-    // docs:end:deploy-l2-bridge
+    logger.info(`NulWallet contract deployed at ${nulWalletContract.address}`);
+    // docs:end:deploy-nul-wallet
 
-    // Set Bridge as a minter
-    // docs:start:authorize-l2-bridge
-    await l2TokenContract.methods.set_minter(l2BridgeContract.address, true).send().wait();
-    // docs:end:authorize-l2-bridge
-
-    // Initialize L1 portal contract
-    // docs:start:setup-portal
-    await l1Client.writeContract({
-      address: l1PortalContractAddress.toString(),
-      abi: TokenPortalAbi,
-      functionName: 'initialize',
-      args: [l1ContractAddresses.registryAddress.toString(), l1TokenContract.toString(), l2BridgeContract.address.toString()],
-      account: l1Client.account.address,
-      chain: l1Client.chain,
-    });
+    // Add owner and voter as contacts
+    // docs:start:add-contact
+    await nulWalletContract.methods.add_contact(ownerAztecAddress).send().wait();
+    logger.info(`Added ${ownerAztecAddress} as a contact`);
     
-    logger.info('L1 portal contract initialized');
+    await nulWalletContract.methods.add_contact(voterAztecAddress).send().wait();
+    logger.info(`Added ${voterAztecAddress} as a contact`);
+    // docs:end:add-contact
 
-    const l1PortalManager = new L1TokenPortalManager(
-      l1PortalContractAddress,
-      l1TokenContract,
-      feeAssetHandler,
-      l1ContractAddresses.outboxAddress,
-      l1Client,
-      logger,
-    );
-    // docs:end:setup-portal
+    // Cast vote using voter's wallet
+    // docs:start:cast-vote
+    const voterNulWallet = await NulWalletContract.at(nulWalletContract.address, voterWallet);
+    await voterNulWallet.methods.cast_vote(candidateAztecAddress).send().wait();
+    logger.info(`Vote cast for candidate ${candidateAztecAddress}`);
+    // docs:end:cast-vote
 
-    // docs:start:l1-bridge-public
-    const claim = await l1PortalManager.bridgeTokensPublic(ownerAztecAddress, MINT_AMOUNT, true);
+    // Get vote count
+    // docs:start:get-vote-count
+    const voteCount = await nulWalletContract.methods.get_vote_count(candidateAztecAddress).simulate();
+    logger.info(`Vote count for ${candidateAztecAddress}: ${voteCount}`);
+    // docs:end:get-vote-count
 
-    // Do 2 unrleated actions because
-    // https://github.com/AztecProtocol/aztec-packages/blob/7e9e2681e314145237f95f79ffdc95ad25a0e319/yarn-project/end-to-end/src/shared/cross_chain_test_harness.ts#L354-L355
-    await l2TokenContract.methods.mint_to_public(ownerAztecAddress, 0n).send().wait();
-    await l2TokenContract.methods.mint_to_public(ownerAztecAddress, 0n).send().wait();
-    // docs:end:l1-bridge-public
-
-    // Claim tokens publicly on L2
-    // docs:start:claim
-    await l2BridgeContract.methods
-      .claim_public(ownerAztecAddress, MINT_AMOUNT, claim.claimSecret, claim.messageLeafIndex)
-      .send()
-      .wait();
-    const balance = await l2TokenContract.methods.balance_of_public(ownerAztecAddress).simulate();
-    logger.info(`Public L2 balance of ${ownerAztecAddress} is ${balance}`);
-    // docs:end:claim
-
-    logger.info('Withdrawing funds from L2');
-
-    // docs:start:setup-withdrawal
-    const withdrawAmount = 9n;
-    const nonce = Fr.random();
-
-    // Give approval to bridge to burn owner's funds:
-    const authwit = await ownerWallet.setPublicAuthWit(
-      {
-        caller: l2BridgeContract.address,
-        action: l2TokenContract.methods.burn_public(ownerAztecAddress, withdrawAmount, nonce),
-      },
-      true,
-    );
-    await authwit.send().wait();
-    // docs:end:setup-withdrawal
-
-    // docs:start:l2-withdraw
-    const l2ToL1Message = await l1PortalManager.getL2ToL1MessageLeaf(
-      withdrawAmount,
-      EthAddress.fromString(ownerEthAddress),
-      l2BridgeContract.address,
-      EthAddress.ZERO,
-    );
-    const l2TxReceipt = await l2BridgeContract.methods
-      .exit_to_l1_public(EthAddress.fromString(ownerEthAddress), withdrawAmount, EthAddress.ZERO, nonce)
-      .send()
-      .wait();
-
-    const newL2Balance = await l2TokenContract.methods.balance_of_public(ownerAztecAddress).simulate();
-    logger.info(`New L2 balance of ${ownerAztecAddress} is ${newL2Balance}`);
-    // docs:end:l2-withdraw
-
-    // docs:start:l1-withdraw
-    const [l2ToL1MessageIndex, siblingPath] = await pxe.getL2ToL1MembershipWitness(
-      await pxe.getBlockNumber(),
-      l2ToL1Message,
-    );
-    await l1PortalManager.withdrawFunds(
-      withdrawAmount,
-      EthAddress.fromString(ownerEthAddress),
-      BigInt(l2TxReceipt.blockNumber!),
-      l2ToL1MessageIndex,
-      siblingPath,
-    );
-
-    const newL1Balance = await l1TokenManager.getL1TokenBalance(ownerEthAddress);
-    logger.info(`New L1 balance of ${ownerEthAddress} is ${newL1Balance}`);
-    // docs:end:l1-withdraw
+    // Verify contact status
+    // docs:start:verify-contact
+    const isContact = await nulWalletContract.methods.is_address_in_contacts(voterAztecAddress).simulate();
+    logger.info(`Is ${voterAztecAddress} a contact? ${isContact}`);
+    // docs:end:verify-contact
   });
 });
