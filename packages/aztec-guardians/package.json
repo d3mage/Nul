@@ -1,6 +1,7 @@
 {
   "name": "aztec-guardians",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "Guardian blocking contract for Aztec",
   "scripts": {
     "test": "jest",
@@ -18,6 +19,5 @@
     "jest-util": "^29.5.0",
     "ts-jest": "^29.1.0",
     "typescript": "^5.0.0"
-  },
-  "packageManager": "yarn@4.5.2+sha512.570504f67349ef26d2d86a768dc5ec976ead977aa086b0bb4237e97d5db7ae5c620f9f0e0edf3ea5047205063faff102bf2a2d778664a94eaaa1085ad483fe2e"
+  }
 }

@@ -23,7 +23,7 @@ VERSION=0.87.4 aztec-up
 ```bash
 cd packages/aztec-contracts/token_bridge
 aztec-nargo compile
-aztec codegen target -o ../../l1-contracts/test/fixtures
+aztec codegen target -o ../l1-contracts/typings/
 ```
 
 #### L1 contracts
