@@ -2,6 +2,7 @@ mod config;
 
 use dep::aztec::macros::aztec;
 
+
 #[aztec]
 pub contract GuardianBlocking {
     use crate::config::Config;
@@ -12,21 +13,25 @@ pub contract GuardianBlocking {
         note::note_viewer_options::NoteViewerOptions,
         utils::comparison::Comparator,
         macros::{functions::{initializer, internal, private, public, utility}, storage::storage},
-        prelude::{AztecAddress, EthAddress, Map, PrivateSet, PublicMutable, PublicImmutable, PrivateMutable},
+        prelude::{AztecAddress, EthAddress, Map, PrivateSet, SharedMutable, PublicImmutable, PrivateMutable},
     };
     use dep::aztec::protocol_types::traits::ToField;
+
+    global CHANGE_AUTHORIZED_DELAY_BLOCKS: u32 = 5;
 
     #[storage]
     struct Storage<Context> {
         config: PublicImmutable<Config, Context>,
         // Map user -> Set of guardians
         user_guardians: Map<AztecAddress, PrivateSet<ValueNote, Context>, Context>,
-        // Map user -> Map of guardian -> approval
-        user_approvals: Map<AztecAddress, PrivateSet<ValueNote, Context>, Context>,
+        // Map user -> number of guardian approvals
+        approval_count: Map<AztecAddress, SharedMutable<u32, CHANGE_AUTHORIZED_DELAY_BLOCKS, Context>, Context>,
+        // Map user -> total number of guardians
+        guardian_count: Map<AztecAddress, SharedMutable<u32, CHANGE_AUTHORIZED_DELAY_BLOCKS, Context>, Context>,
         // Map user -> blocking initiated status
         blocking_started: Map<AztecAddress, PrivateMutable<ValueNote, Context>, Context>,
-        // Map user -> final blocked status
-        user_blocked: Map<AztecAddress, PrivateMutable<ValueNote, Context>, Context>,
+        // Map user -> final blocked status (1 = blocked, 0 = not blocked)
+        user_blocked: Map<AztecAddress, SharedMutable<u32, CHANGE_AUTHORIZED_DELAY_BLOCKS, Context>, Context>,
     }
 
     // ========== Init ==========
@@ -43,16 +48,40 @@ pub contract GuardianBlocking {
         let sender = context.msg_sender();
         let note = ValueNote::new(1, guardian);
         storage.user_guardians.at(sender).insert(note);
+        
+        // Schedule guardian count increment
+        GuardianBlocking::at(context.this_address()).increment_guardian_count(sender).enqueue(
+            &mut context
+        );
+    }
+
+    #[public]
+    #[internal]
+    fn increment_guardian_count(user: AztecAddress) {
+        let current_count = storage.guardian_count.at(user).get_current_value();
+        storage.guardian_count.at(user).schedule_value_change(current_count + 1);
     }
 
     #[private]
     fn remove_guardian(guardian: AztecAddress) {
         let sender = context.msg_sender();
-        let note = ValueNote::new(1, guardian);
 
-        storage.user_guardians.at(sender).pop_notes(NoteGetterOptions::new()
+        let removed_notes = storage.user_guardians.at(sender).pop_notes(NoteGetterOptions::new()
             .select(ValueNote::properties().owner, Comparator.EQ, guardian)
             .set_limit(1));
+            
+        if removed_notes.len() == 1 {
+            GuardianBlocking::at(context.this_address()).decrement_guardian_count(sender).enqueue(
+                &mut context
+            );
+        }
+    }
+
+    #[public]
+    #[internal]
+    fn decrement_guardian_count(user: AztecAddress) {
+        let current_count = storage.guardian_count.at(user).get_current_value();
+        storage.guardian_count.at(user).schedule_value_change(current_count - 1);
     }
 
     // ========== Blocking Flow ==========
@@ -65,17 +94,22 @@ pub contract GuardianBlocking {
             .set_limit(1));
         assert(notes.len() == 1, "Not a guardian");
 
-        let is_user_blocked = storage.user_blocked.at(user).get_note();
-        assert(is_user_blocked.note.value == 1, "Already blocked");
-        
-        let is_blocking_started = storage.blocking_started.at(user).get_note();
-        assert(is_blocking_started.note.value == 1, "Block already started");
+        let is_user_blocked = storage.user_blocked.at(user).get_current_value();
+        assert(is_user_blocked == 0, "Already blocked");
 
         let note = ValueNote::new(1, user);
         storage.blocking_started.at(user).replace(note);
 
-        let note = ValueNote::new(1, sender);
-        storage.user_approvals.at(user).insert(note);
+        // Initialize approval count
+        GuardianBlocking::at(context.this_address()).set_public_block(user).enqueue(
+            &mut context
+        );
+    }
+
+    #[public]
+    #[internal]
+    fn set_public_block(user: AztecAddress) {
+        storage.approval_count.at(user).schedule_value_change(1);
     }
 
     #[private]
@@ -87,42 +121,39 @@ pub contract GuardianBlocking {
             .set_limit(1));
         assert(notes.len() == 1, "Not a guardian");
 
-        let is_blocking_started = storage.blocking_started.at(user).get_note();
-        assert(is_blocking_started.note.value == 1, "Blocking not started");
+        let is_user_blocked = storage.user_blocked.at(user).get_current_value();
+        assert(is_user_blocked == 0, "Already blocked");
 
-        let is_user_blocked = storage.user_blocked.at(user).get_note();
-        assert(is_user_blocked.note.value == 1, "Already blocked");
+        GuardianBlocking::at(context.this_address()).increment_approval_count(user).enqueue(
+            &mut context
+        );
 
-        let note = ValueNote::new(1, sender);
-        storage.user_approvals.at(user).insert(note);
+        GuardianBlocking::at(context.this_address()).check_block_user(user).enqueue(
+            &mut context
+        );
+    }
 
-        let mut all_approved = true;
-        let all_notes = storage.user_guardians.at(user).get_notes(NoteGetterOptions::new());
-        for i in 0..10 {
-            if i < all_notes.len() {
-              let note2 = all_notes.get_unchecked(i).note;
-              storage.user_approvals.at(user);
-              let user_approval_note = storage.user_approvals.at(user).pop_notes(NoteGetterOptions::new()
-                .select(ValueNote::properties().owner, Comparator.EQ, sender)
-                .set_limit(1));
-              if user_approval_note.len() != 1 {
-                  all_approved = false;
-              }
-            }
+    #[public]
+    #[internal]
+    fn check_block_user(user: AztecAddress) {
+        let total_guardians = storage.guardian_count.at(user).get_current_value();
+        let scheduled_approvals = storage.approval_count.at(user).get_current_value();
+        if scheduled_approvals == total_guardians {
+            storage.user_blocked.at(user).schedule_value_change(1);
         }
+    }
 
-        if all_approved {
-            let new_user_blocked_note = ValueNote::new(1, user);
-            storage.user_blocked.at(user).replace(new_user_blocked_note);
-            context.message_portal(storage.config.read().portal, user.to_field());
-        }
+    #[public]
+    #[internal]
+    fn increment_approval_count(user: AztecAddress) {
+        let current_approvals = storage.approval_count.at(user).get_current_value();
+        storage.approval_count.at(user).schedule_value_change(current_approvals + 1);
     }
 
     // ========== Utility ==========
 
     #[utility]
     unconstrained fn is_user_blocked(user: AztecAddress) -> bool {
-      let is_user_blocked = storage.user_blocked.at(user).view_note();
-      is_user_blocked.value == 1
+        storage.user_blocked.at(user).get_current_value() == 1
     }
 }
