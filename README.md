@@ -39,11 +39,25 @@ npx hardhat compile
 Run the sandbox
 
 ```bash
-aztec-sandbox
+LOG_LEVEL="verbose" aztec start --sandbox
+```
+
+Reload the sandbox
+```bash
+# LOG_LEVEL=debug aztec start --sandbox todo: docker command
 ```
 
 Run the tests
 
 ```bash
 yarn start
+```
+```
+aztec-wallet deploy \
+    --node-url $NODE_URL \
+    --from accounts:my-wallet \
+    --payment method=fpc-sponsored,fpc=contracts:sponsoredfpc \
+    --alias token \
+    GuardianBlocking \
+    --args accounts:my-wallet 0x572725ffb3af63745098576152d8756c333d4525 --no-wait
 ```

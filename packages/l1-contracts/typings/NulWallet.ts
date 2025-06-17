@@ -154,14 +154,11 @@ VoteNote: {
     /** add_contact(address: struct) */
     add_contact: ((address: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** cast_vote(candidate: struct) */
-    cast_vote: ((candidate: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
-
     /** constructor(owner: struct, portal: struct) */
     constructor: ((owner: AztecAddressLike, portal: EthAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
-    /** get_vote_count(candidate: struct) */
-    get_vote_count: ((candidate: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    /** contacts_length() */
+    contacts_length: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** is_address_in_contacts(address: struct) */
     is_address_in_contacts: ((address: AztecAddressLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;

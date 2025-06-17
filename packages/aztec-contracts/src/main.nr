@@ -7,12 +7,18 @@ use dep::aztec::macros::aztec;
 pub contract NulWallet {
     use crate::config::Config;
 
-    use dep::aztec::prelude::{AztecAddress, EthAddress, PublicImmutable, PublicMutable, PrivateSet};
-    use dep::aztec::macros::{functions::{initializer, private, public, view}, storage::storage};
     use dep::address_note::address_note::AddressNote;
-    use dep::aztec::prelude::NoteGetterOptions;
-    use dep::aztec::utils::comparison::Comparator;
+    use dep::aztec::context::PrivateContext;
+    use dep::aztec::macros::{functions::{initializer, private, public, view}, storage::storage};
     use dep::aztec::note::note_interface::NoteProperties;
+    use dep::aztec::note::note_viewer_options::NoteViewerOptions;
+    use dep::aztec::oracle::debug_log::{debug_log, debug_log_format};
+    use dep::aztec::prelude::{AztecAddress, EthAddress, PrivateSet, PublicImmutable, PublicMutable};
+    use dep::aztec::prelude::NoteGetterOptions;
+    use dep::aztec::protocol_types::traits::ToField;
+    use dep::aztec::utils::comparison::Comparator;
+    use dep::aztec::messages::logs::note::encode_and_encrypt_note;
+
     use crate::vote_note::VoteNote;
 
     #[storage]
@@ -31,53 +37,33 @@ pub contract NulWallet {
 
     #[private]
     fn add_contact(address: AztecAddress) {
-
         let caller = context.msg_sender();
+
         let config = storage.config.read();
         assert(caller == config.owner, "Only the contract owner can add contacts");
 
-        let note = AddressNote::new(
-            address,
-            caller
-        );
-
-        storage.contacts.insert(note);
+        let note = AddressNote::new(address, caller);
+        storage.contacts.insert(note).emit(encode_and_encrypt_note(&mut context, config.owner, address));
     }
 
     #[private]
     fn is_address_in_contacts(address: AztecAddress) -> bool {
-        //todo: notevieweroptions?
-        let mut options = NoteGetterOptions::new();
-        options.select(AddressNote::properties().address, Comparator.EQ, address);
-        
-        let notes = storage.contacts.get_notes(options);
-        
+        let notes = storage.contacts.get_notes(NoteGetterOptions::new().select(
+            AddressNote::properties().address,
+            Comparator.EQ,
+            address,
+        ));
+
         notes.len() > 0
     }
 
     #[private]
-    fn cast_vote(candidate: AztecAddress) {
-        let caller = context.msg_sender();
-        //todo: check if this is a correct way to invoke a private function
-        let is_contact = NulWallet::at(context.this_address()).is_address_in_contacts(caller).call(&mut context); 
-        assert(is_contact, "Only contacts can vote");
-        
-        let config = storage.config.read();
-        let vote_note = VoteNote::new(
-            candidate,
-            caller,
-            config.owner
-        );
-        storage.votes.insert(vote_note);
-    }
-
-    #[private]
-    fn get_vote_count(candidate: AztecAddress) -> u32 {
-        //todo: notevieweroptions?
+    fn contacts_length() -> u32 {
         let mut options = NoteGetterOptions::new();
-        options.select(VoteNote::properties().candidate, Comparator.EQ, candidate);
-        let votes = storage.votes.get_notes(options);
-        votes.len() as u32
+        options.limit = 10;
+        let notes = storage.contacts.get_notes(options);
+
+        notes.len() as u32
     }
 
 }
